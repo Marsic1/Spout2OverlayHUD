@@ -50,7 +50,6 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\ofApp.h" />
     <ClInclude Include="..\SpoutCommon.h">
       <Filter>SpoutGL</Filter>
     </ClInclude>
@@ -94,6 +93,7 @@
       <Filter>Addons\ofxXmlSettings\libs</Filter>
     </ClInclude>
     <ClInclude Include="resource.h" />
+    <ClInclude Include="src\ofApp.h" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="SpoutGL">
