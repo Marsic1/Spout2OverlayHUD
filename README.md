@@ -16,7 +16,7 @@
 
 ## 🛠️ Technologies Used
 
-🔹 **[OpenFrameworks](https://openframeworks.cc/)**: For window management *(Version 13 - 20250331 release used for compilation)*  
+🔹 **[OpenFrameworks](https://openframeworks.cc/)**: For window management *(Version 13 - 20260731 release used for 0.5-RC compilation)*  
 🔹 **[Spout2 SDK](https://spout.zeal.co/)**: For Spout2 signal management and rendering  
 
 ---
@@ -24,7 +24,7 @@
 ## 🚀 Installation & Compilation Guide
 
 1️⃣ **Download and unpack** OpenFrameworks (13+)  
-2️⃣ **Download and unpack** SpoutGL inside the `apps` folder of OpenFrameworks  
+2️⃣ **Download and unpack** SpoutGL folder (from SpoutGL SDK git) inside the `apps` folder of OpenFrameworks  
 3️⃣ **Download and unpack** this repository inside the `SpoutGL` folder  
 
 Your folder structure should look like this:
