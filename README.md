@@ -2,6 +2,8 @@
 
 🎯 **Spout2OverlayHUD** is a Windows application that displays a Spout2 sender signal as a HUD overlay, with direct access to OpenGL textures. Perfect for integrating OBS scenes and sources directly on your screen!
 
+![Spout2OverlayHUD screenshot](screenshot.png)
+
 ---
 
 ## ✨ Features
@@ -18,7 +20,7 @@
 ✅ **Idle mode** *(new in 1.0)*: Drops to a low refresh rate when no sender is present to save resources.  
 ✅ **Versatile usage**: Ideal for streamers with a single monitor, allowing real-time display of effects, chat, and interactive overlays (Crowd Control, Stream Stickers, Viewer Attack) directly in the game.
 
-📺 **Example usage**: Use OBS to overlay webcams, browsers, monitors—the possibilities are endless!
+📺 **Example usage**: Use OBS to overlay webcams, browsers, monitors—the possibilities are endless! For a lighter sender without OBS, try [WebStage](https://github.com/Marsic1/WebStage).
 
 ---
 
@@ -59,6 +61,7 @@ Enhance your streaming experience by using these tools alongside Spout2OverlayHU
 - 🎭 [Stream Stickers](https://streamstickers.com/) - Interactive stickers overlay  
 - 🎮 [Viewer Attack](https://www.viewerattack.com/) - Real-time throwable stickers and effects  
 - 🕹️ [Crowd Control](https://crowdcontrol.live/) - Viewer-controlled game interactions  
+- 🖥️ [WebStage](https://github.com/Marsic1/WebStage) - Lightweight OBS alternative: composites HTTP overlays and sends them via Spout2, made to pair with this HUD  
 
 ---
 
