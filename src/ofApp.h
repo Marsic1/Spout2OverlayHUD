@@ -38,6 +38,8 @@ struct MonitorInfo {
 struct HotkeyCombo {
 	UINT vk = 0;        // virtual key code, 0 = not set
 	UINT modifiers = 0; // MOD_CONTROL / MOD_ALT / MOD_SHIFT / MOD_WIN
+	UINT scan = 0;      // scancode at capture time, 0 = unknown (legacy config)
+	bool extended = false; // extended-key flag at capture time
 	bool IsSet() const { return vk != 0; }
 };
 
@@ -101,8 +103,8 @@ class ofApp : public ofBaseApp{
 		HotkeyCombo hotkeyScreen;
 		void RegisterAllHotkeys();
 		void UnregisterAllHotkeys();
-		bool ApplyPauseHotkey(UINT modifiers, UINT vk);
-		bool ApplyScreenHotkey(UINT modifiers, UINT vk);
+		bool ApplyPauseHotkey(UINT modifiers, UINT vk, UINT scan, bool extended);
+		bool ApplyScreenHotkey(UINT modifiers, UINT vk, UINT scan, bool extended);
 		void ClearAllHotkeys();
 		void LoadHotkeys();
 		void SaveHotkeys();

@@ -1,6 +1,6 @@
 ﻿/*
 
-	Spout2OverlayHUD V1.0
+	Spout2OverlayHUD V1.1
 
 	Spout 2.007-017
 	OpenFrameworks 13 v20260731
@@ -63,8 +63,12 @@ enum {
 	IDM_HOTKEY_SCREEN_SET = 11,
 	IDM_HOTKEY_CLEAR = 12,
 	IDM_SCREEN_BASE = 100, // 100 + monitor index
-	HK_PAUSE = 1001,       // RegisterHotKey ids
+	HK_PAUSE = 1001,       // RegisterHotKey ids (base + aliases)
 	HK_SCREEN = 1002,
+	HK_PAUSE_A = 1003,     // alias registrations of the same binding
+	HK_SCREEN_A = 1004,
+	HK_PAUSE_B = 1005,
+	HK_SCREEN_B = 1006,
 	IDM_SPECIAL_BASE = 9000 // headers / separators (disabled, never a command)
 };
 
@@ -319,7 +323,32 @@ static void DrawTrayMenuItem(HWND hWnd, const DRAWITEMSTRUCT * dis)
 //--------------------------------------------------------------
 // Hotkey string helpers
 //--------------------------------------------------------------
-static std::wstring VkToWString(UINT vk)
+// Keys whose scancode carries the 0xE0 prefix: GetKeyNameTextW needs
+// bit 24 set for them, otherwise it names the non-extended twin
+// (e.g. numpad "/" would come back as the main "-" key).
+static bool IsExtendedKey(UINT vk)
+{
+	switch (vk)
+	{
+	case VK_INSERT: case VK_DELETE: case VK_HOME: case VK_END:
+	case VK_PRIOR: case VK_NEXT:
+	case VK_LEFT: case VK_RIGHT: case VK_UP: case VK_DOWN:
+	case VK_DIVIDE: case VK_NUMLOCK:
+	case VK_RCONTROL: case VK_RMENU: case VK_LWIN: case VK_RWIN: case VK_APPS:
+		return true;
+	}
+	return false;
+}
+
+// Display name of a virtual key. Stable names first: letters, digits,
+// F-keys and the classic editing / navigation keys keep their English
+// names on every layout (these are also the persistence tokens, see
+// VkToToken). Everything else (OEM punctuation, numpad, exotic keys)
+// is named by the OS for the CURRENT keyboard layout: "ì" on IT, "]"
+// on US, and real numpad names instead of "Key109".
+// scan/extended come from the capture when available and pin the
+// exact physical key.
+static std::wstring VkToWString(UINT vk, UINT scan = 0, bool extended = false)
 {
 	if (vk >= 'A' && vk <= 'Z') return std::wstring(1, (wchar_t)vk);
 	if (vk >= '0' && vk <= '9') return std::wstring(1, (wchar_t)vk);
@@ -340,6 +369,18 @@ static std::wstring VkToWString(UINT vk)
 	case VK_UP: return L"Up";
 	case VK_DOWN: return L"Down";
 	case VK_SNAPSHOT: return L"PrtSc";
+	default: break;
+	}
+	UINT sc = scan ? (scan & 0xFF) : (MapVirtualKeyW(vk, MAPVK_VK_TO_VSC_EX) & 0xFF);
+	if (sc) {
+		LONG lp = (LONG)(sc << 16);
+		if (extended || IsExtendedKey(vk)) lp |= 0x1000000;
+		wchar_t name[64] = {};
+		if (GetKeyNameTextW(lp, name, (int)(sizeof(name) / sizeof(name[0]))) > 0 && name[0])
+			return name;
+	}
+	// Last resort: legacy US-layout table, then the raw code.
+	switch (vk) {
 	case VK_OEM_3: return L"`";
 	case VK_OEM_MINUS: return L"-";
 	case VK_OEM_COMMA: return L",";
@@ -350,8 +391,47 @@ static std::wstring VkToWString(UINT vk)
 	case VK_OEM_4: return L"[";
 	case VK_OEM_5: return L"\\";
 	case VK_OEM_6: return L"]";
+	case VK_OEM_102: return L"<";
 	}
 	return L"Key" + std::to_wstring(vk);
+}
+
+// Stable ASCII token for config.ini: identical to the display name
+// whenever that name parses back to the same VK, otherwise "#<code>"
+// so no key is ever lost in a save/load round-trip (e.g. numpad keys).
+static std::string VkToToken(UINT vk)
+{
+	if (vk >= 'A' && vk <= 'Z') return std::string(1, (char)vk);
+	if (vk >= '0' && vk <= '9') return std::string(1, (char)vk);
+	if (vk >= VK_F1 && vk <= VK_F24) return "F" + std::to_string(vk - VK_F1 + 1);
+	switch (vk) {
+	case VK_SPACE: return "Space";
+	case VK_RETURN: return "Enter";
+	case VK_TAB: return "Tab";
+	case VK_BACK: return "Backspace";
+	case VK_INSERT: return "Insert";
+	case VK_DELETE: return "Delete";
+	case VK_HOME: return "Home";
+	case VK_END: return "End";
+	case VK_PRIOR: return "PgUp";
+	case VK_NEXT: return "PgDn";
+	case VK_LEFT: return "Left";
+	case VK_RIGHT: return "Right";
+	case VK_UP: return "Up";
+	case VK_DOWN: return "Down";
+	case VK_SNAPSHOT: return "PrtSc";
+	case VK_OEM_3: return "`";
+	case VK_OEM_MINUS: return "-";
+	case VK_OEM_COMMA: return ",";
+	case VK_OEM_PERIOD: return ".";
+	case VK_OEM_2: return "/";
+	case VK_OEM_1: return ";";
+	case VK_OEM_7: return "'";
+	case VK_OEM_4: return "[";
+	case VK_OEM_5: return "\\";
+	case VK_OEM_6: return "]";
+	}
+	return "#" + std::to_string(vk);
 }
 
 static std::wstring HotkeyToString(const HotkeyCombo & hk)
@@ -363,16 +443,46 @@ static std::wstring HotkeyToString(const HotkeyCombo & hk)
 	if (hk.modifiers & MOD_ALT) s += L"Alt+";
 	if (hk.modifiers & MOD_SHIFT) s += L"Shift+";
 	if (hk.modifiers & MOD_WIN) s += L"Win+";
-	s += VkToWString(hk.vk);
+	s += VkToWString(hk.vk, hk.scan, hk.extended);
 	return s;
 }
 
 static std::string HotkeyToStringNarrow(const HotkeyCombo & hk)
 {
-	// Persistence format: "none" marks an unset hotkey
-	std::wstring w = HotkeyToString(hk);
-	if (w.empty()) return "none";
-	return std::string(w.begin(), w.end());
+	// Persistence: readable tokens, layout-independent round-trip
+	// ("none" = unset)
+	if (!hk.IsSet()) return "none";
+	std::string s;
+	if (hk.modifiers & MOD_CONTROL) s += "Ctrl+";
+	if (hk.modifiers & MOD_ALT) s += "Alt+";
+	if (hk.modifiers & MOD_SHIFT) s += "Shift+";
+	if (hk.modifiers & MOD_WIN) s += "Win+";
+	s += VkToToken(hk.vk);
+	return s;
+}
+
+static UINT NumericVkToken(const std::string & token)
+{
+	// "#109" (current) or "Key109" (written by older builds that had no
+	// name for the key): both carry the raw virtual-key code.
+	const char* num = nullptr;
+	if (!token.empty() && token[0] == '#')
+		num = token.c_str() + 1;
+	else if (token.size() > 3 && (token[0] == 'K' || token[0] == 'k') &&
+		(token[1] == 'e' || token[1] == 'E') && (token[2] == 'y' || token[2] == 'Y'))
+		num = token.c_str() + 3;
+	else
+		return 0;
+	if (!*num) return 0;
+	for (const char* p = num; *p; p++)
+		if (*p < '0' || *p > '9') return 0;
+	int n = atoi(num);
+	if (n < 1 || n > 254) return 0;
+	// Pure modifier keys can never be the main key of a combo.
+	if (n == VK_SHIFT || n == VK_CONTROL || n == VK_MENU ||
+		n == VK_LWIN || n == VK_RWIN || (n >= VK_LSHIFT && n <= VK_RMENU))
+		return 0;
+	return (UINT)n;
 }
 
 static UINT StringToVk(const std::string & token)
@@ -420,6 +530,8 @@ static UINT StringToVk(const std::string & token)
 	if (ieq(token, "Up")) return VK_UP;
 	if (ieq(token, "Down")) return VK_DOWN;
 	if (ieq(token, "PrtSc")) return VK_SNAPSHOT;
+	UINT numeric = NumericVkToken(token);
+	if (numeric) return numeric;
 	return 0;
 }
 
@@ -431,7 +543,20 @@ static std::string TrimString(const std::string & s)
 	return s.substr(a, b - a + 1);
 }
 
-// Parse "Ctrl+Shift+P" (or "none" / "") into a HotkeyCombo.
+// std::stoi with fallback (never throws)
+static int SafeStoi(const std::string & s, int def)
+{
+	try {
+		return std::stoi(TrimString(s));
+	} catch (...) {
+		return def;
+	}
+}
+
+// Parse a persisted hotkey into a HotkeyCombo.
+//   Token format (current):        "Ctrl+F1", "Ctrl+#109" (numpad), "none", ""
+//   Interim numeric format:        "modifiers,vk,scan,extended"
+//   Legacy US-layout-name format:  "Ctrl+]", "Ctrl+Key109"
 // Returns false if the string could not be parsed (combo left unset).
 static bool ParseHotkeyString(const std::string & str, HotkeyCombo & out)
 {
@@ -439,6 +564,32 @@ static bool ParseHotkeyString(const std::string & str, HotkeyCombo & out)
 	std::string s = TrimString(str);
 	if (s.empty() || s == "none" || s == "None" || s == "NONE")
 		return true; // valid: no hotkey
+
+	// New numeric format: digits and commas only, at least one comma
+	if (s.find_first_not_of("0123456789,") == std::string::npos
+		&& s.find(',') != std::string::npos) {
+		std::vector<std::string> fields;
+		size_t pos = 0;
+		while (pos <= s.size()) {
+			size_t next = s.find(',', pos);
+			fields.push_back(s.substr(pos, (next == std::string::npos ? s.size() : next) - pos));
+			if (next == std::string::npos) break;
+			pos = next + 1;
+		}
+		if (fields.size() < 2 || fields.size() > 4)
+			return false;
+		UINT mods = SafeStoi(fields[0], -1);
+		UINT vk = SafeStoi(fields[1], 0);
+		UINT scan = fields.size() > 2 ? SafeStoi(fields[2], 0) : 0;
+		UINT ext = fields.size() > 3 ? SafeStoi(fields[3], 0) : 0;
+		if (mods == (UINT)-1 || vk == 0 || vk > 255)
+			return vk == 0 ? true : false; // "0" vk = unset, else invalid
+		out.modifiers = mods;
+		out.vk = vk;
+		out.scan = scan > 0x7F ? 0 : scan;
+		out.extended = ext != 0;
+		return true;
+	}
 
 	UINT mods = 0;
 	UINT vk = 0;
@@ -558,8 +709,8 @@ static LRESULT CALLBACK HotkeyDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM
 		}
 		if (vk == VK_BACK) { // clear the binding
 			if (g_appInstance) {
-				if (g_hotkeyCapture.target == 1) g_appInstance->ApplyPauseHotkey(0, 0);
-				else if (g_hotkeyCapture.target == 2) g_appInstance->ApplyScreenHotkey(0, 0);
+				if (g_hotkeyCapture.target == 1) g_appInstance->ApplyPauseHotkey(0, 0, 0, false);
+				else if (g_hotkeyCapture.target == 2) g_appInstance->ApplyScreenHotkey(0, 0, 0, false);
 			}
 			DestroyWindow(hDlg);
 			return 0;
@@ -577,10 +728,31 @@ static LRESULT CALLBACK HotkeyDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM
 			MessageBeep(MB_ICONASTERISK);
 			return 0;
 		}
+		// Scancode and extended flag from the keydown message: used for
+		// layout-aware display and VK-alias registration
+		UINT scan = (UINT)((lParam >> 16) & 0xFF);
+		bool ext = ((lParam >> 24) & 1) != 0;
+		// Same combination on the other binding: the second registration
+		// would silently fail, leaving a hotkey that looks set but never
+		// fires. Refuse with a specific message.
+		if (g_appInstance) {
+			const HotkeyCombo & other = (g_hotkeyCapture.target == 1)
+				? g_appInstance->hotkeyScreen : g_appInstance->hotkeyPause;
+			const wchar_t * otherName = (g_hotkeyCapture.target == 1)
+				? L"Switch Screen" : L"Pause Overlay";
+			if (other.IsSet() && other.vk == vk && other.modifiers == mods) {
+				std::wstring msg = L"That combination is already used by the ";
+				msg += otherName;
+				msg += L" hotkey.";
+				MessageBoxW(hDlg, msg.c_str(), L"Spout2OverlayHUD", MB_OK | MB_ICONWARNING);
+				DestroyWindow(hDlg);
+				return 0;
+			}
+		}
 		bool ok = false;
 		if (g_appInstance) {
-			if (g_hotkeyCapture.target == 1) ok = g_appInstance->ApplyPauseHotkey(mods, vk);
-			else if (g_hotkeyCapture.target == 2) ok = g_appInstance->ApplyScreenHotkey(mods, vk);
+			if (g_hotkeyCapture.target == 1) ok = g_appInstance->ApplyPauseHotkey(mods, vk, scan, ext);
+			else if (g_hotkeyCapture.target == 2) ok = g_appInstance->ApplyScreenHotkey(mods, vk, scan, ext);
 		}
 		if (!ok) {
 			MessageBoxW(hDlg,
@@ -1205,12 +1377,12 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
 		}
 	}
 
-	// Global hotkeys
+	// Global hotkeys (base id or one of its aliases)
 	if (message == WM_HOTKEY) {
-		if (wParam == HK_PAUSE && g_appInstance) {
+		if (g_appInstance && (wParam == HK_PAUSE || wParam == HK_PAUSE_A || wParam == HK_PAUSE_B)) {
 			g_appInstance->TogglePause();
 			return 0;
-		} else if (wParam == HK_SCREEN && g_appInstance) {
+		} else if (g_appInstance && (wParam == HK_SCREEN || wParam == HK_SCREEN_A || wParam == HK_SCREEN_B)) {
 			g_appInstance->CycleScreen();
 			return 0;
 		}
@@ -1294,7 +1466,7 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
 			g_nextSpecialMenuId = IDM_SPECIAL_BASE + 100;
 			HMENU hMenu = CreatePopupMenu();
 
-			AddMenuHeader(hMenu, L"Spout2OverlayHUD by Marsic1 V1.0");
+			AddMenuHeader(hMenu, L"Spout2OverlayHUD by Marsic1 V1.1");
 			AddMenuSeparator(hMenu);
 
 			AddMenuItem(hMenu, IDM_PAUSE,
@@ -1720,15 +1892,6 @@ void ofApp::CycleScreen() {
 //--------------------------------------------------------------
 // Config helpers
 //--------------------------------------------------------------
-static int SafeStoi(const std::string & s, int def)
-{
-	try {
-		return std::stoi(TrimString(s));
-	} catch (...) {
-		return def;
-	}
-}
-
 std::string ofApp::GetConfigPath() {
 	static std::string cachedPath;
 	if (!cachedPath.empty()) return cachedPath;
@@ -1872,6 +2035,68 @@ void ofApp::ApplyFrameRateSettings() {
 //--------------------------------------------------------------
 // Hotkeys
 //--------------------------------------------------------------
+// US layout handle for VK alias derivation: some layouts translate
+// OEM-key VKs differently between capture and hotkey matching, so
+// each binding is also registered under the VK the same physical
+// key has in the current and in the US layout (scancode based).
+static HKL GetUSLayout()
+{
+	static HKL us = nullptr;
+	if (!us)
+		us = LoadKeyboardLayoutW(L"00000409", KLF_NOTELLSHELL);
+	return us;
+}
+
+// All VKs to register for a binding (captured vk plus
+// scancode-derived VKs), deduplicated
+static std::vector<UINT> HotkeyVks(const HotkeyCombo & hk)
+{
+	std::vector<UINT> vks;
+	auto add = [&](UINT v) {
+		if (v && v <= 255 && std::find(vks.begin(), vks.end(), v) == vks.end())
+			vks.push_back(v);
+	};
+	add(hk.vk);
+	// Derive the scancode when it was not captured or persisted
+	// (token persistence carries only the VK)
+	UINT sc = hk.scan;
+	bool extended = hk.extended;
+	if (!sc) {
+		UINT m = MapVirtualKeyExW(hk.vk, MAPVK_VK_TO_VSC_EX, GetKeyboardLayout(0));
+		if ((m & 0xFF00) == 0xE000)
+			extended = true; // extended-key prefix: plain conversion unreliable
+		sc = m & 0xFF;
+	}
+	// Extended scancodes do not map reliably through the plain
+	// VSC_TO_VK conversion: skip alias derivation for those
+	if (sc && !extended) {
+		HKL cur = GetKeyboardLayout(0);
+		add(MapVirtualKeyExW(sc, MAPVK_VSC_TO_VK, cur));
+		HKL us = GetUSLayout();
+		if (us && us != cur)
+			add(MapVirtualKeyExW(sc, MAPVK_VSC_TO_VK, us));
+	}
+	return vks;
+}
+
+// Register a binding under its base id and alias ids.
+// Returns how many registrations succeeded.
+static int RegisterHotkeySet(HWND w, const UINT * ids, size_t idCount,
+	const HotkeyCombo & hk)
+{
+	if (!hk.IsSet()) return 0;
+	std::vector<UINT> vks = HotkeyVks(hk);
+	int ok = 0;
+	for (size_t i = 0; i < vks.size() && i < idCount; i++) {
+		if (RegisterHotKey(w, ids[i], hk.modifiers | MOD_NOREPEAT, vks[i]))
+			ok++;
+	}
+	return ok;
+}
+
+static const UINT kPauseIds[3] = { HK_PAUSE, HK_PAUSE_A, HK_PAUSE_B };
+static const UINT kScreenIds[3] = { HK_SCREEN, HK_SCREEN_A, HK_SCREEN_B };
+
 void ofApp::LoadHotkeys() {
 	std::string value;
 	if (ReadConfigValue("HotkeyPause", value)) {
@@ -1892,66 +2117,72 @@ void ofApp::SaveHotkeys() {
 
 //--------------------------------------------------------------
 void ofApp::UnregisterAllHotkeys() {
-	UnregisterHotKey(hwnd, HK_PAUSE);
-	UnregisterHotKey(hwnd, HK_SCREEN);
+	for (UINT id = HK_PAUSE; id <= HK_SCREEN_B; id++)
+		UnregisterHotKey(hwnd, id);
 }
 
 //--------------------------------------------------------------
 void ofApp::RegisterAllHotkeys() {
 	UnregisterAllHotkeys();
-	if (hotkeyPause.IsSet()) {
-		if (!RegisterHotKey(hwnd, HK_PAUSE, hotkeyPause.modifiers | MOD_NOREPEAT, hotkeyPause.vk)) {
-			MessageBoxW(hwnd, L"Could not register the Pause Overlay hotkey.\n"
-				L"The combination may already be in use by another application.",
-				L"Spout2OverlayHUD", MB_OK | MB_ICONWARNING);
-		}
+	if (hotkeyPause.IsSet() && RegisterHotkeySet(hwnd, kPauseIds, 3, hotkeyPause) == 0) {
+		MessageBoxW(hwnd, L"Could not register the Pause Overlay hotkey.\n"
+			L"The combination may already be in use by another application.",
+			L"Spout2OverlayHUD", MB_OK | MB_ICONWARNING);
 	}
-	if (hotkeyScreen.IsSet()) {
-		if (!RegisterHotKey(hwnd, HK_SCREEN, hotkeyScreen.modifiers | MOD_NOREPEAT, hotkeyScreen.vk)) {
-			MessageBoxW(hwnd, L"Could not register the Switch Screen hotkey.\n"
-				L"The combination may already be in use by another application.",
-				L"Spout2OverlayHUD", MB_OK | MB_ICONWARNING);
-		}
+	if (hotkeyScreen.IsSet() && RegisterHotkeySet(hwnd, kScreenIds, 3, hotkeyScreen) == 0) {
+		MessageBoxW(hwnd, L"Could not register the Switch Screen hotkey.\n"
+			L"The combination may already be in use by another application.",
+			L"Spout2OverlayHUD", MB_OK | MB_ICONWARNING);
 	}
 }
 
 //--------------------------------------------------------------
-bool ofApp::ApplyPauseHotkey(UINT modifiers, UINT vk) {
-	UnregisterHotKey(hwnd, HK_PAUSE);
+bool ofApp::ApplyPauseHotkey(UINT modifiers, UINT vk, UINT scan, bool extended) {
+	for (UINT id : kPauseIds)
+		UnregisterHotKey(hwnd, id);
 	if (vk == 0) { // clear
 		hotkeyPause = HotkeyCombo();
 		SaveHotkeys();
 		return true;
 	}
-	if (RegisterHotKey(hwnd, HK_PAUSE, modifiers | MOD_NOREPEAT, vk)) {
-		hotkeyPause.modifiers = modifiers;
-		hotkeyPause.vk = vk;
+	HotkeyCombo trial;
+	trial.modifiers = modifiers;
+	trial.vk = vk;
+	trial.scan = scan;
+	trial.extended = extended;
+	if (RegisterHotkeySet(hwnd, kPauseIds, 3, trial) > 0) {
+		hotkeyPause = trial;
 		SaveHotkeys();
 		return true;
 	}
 	// Failed: restore the previous binding
 	if (hotkeyPause.IsSet())
-		RegisterHotKey(hwnd, HK_PAUSE, hotkeyPause.modifiers | MOD_NOREPEAT, hotkeyPause.vk);
+		RegisterHotkeySet(hwnd, kPauseIds, 3, hotkeyPause);
 	return false;
 }
 
 //--------------------------------------------------------------
-bool ofApp::ApplyScreenHotkey(UINT modifiers, UINT vk) {
-	UnregisterHotKey(hwnd, HK_SCREEN);
+bool ofApp::ApplyScreenHotkey(UINT modifiers, UINT vk, UINT scan, bool extended) {
+	for (UINT id : kScreenIds)
+		UnregisterHotKey(hwnd, id);
 	if (vk == 0) { // clear
 		hotkeyScreen = HotkeyCombo();
 		SaveHotkeys();
 		return true;
 	}
-	if (RegisterHotKey(hwnd, HK_SCREEN, modifiers | MOD_NOREPEAT, vk)) {
-		hotkeyScreen.modifiers = modifiers;
-		hotkeyScreen.vk = vk;
+	HotkeyCombo trial;
+	trial.modifiers = modifiers;
+	trial.vk = vk;
+	trial.scan = scan;
+	trial.extended = extended;
+	if (RegisterHotkeySet(hwnd, kScreenIds, 3, trial) > 0) {
+		hotkeyScreen = trial;
 		SaveHotkeys();
 		return true;
 	}
 	// Failed: restore the previous binding
 	if (hotkeyScreen.IsSet())
-		RegisterHotKey(hwnd, HK_SCREEN, hotkeyScreen.modifiers | MOD_NOREPEAT, hotkeyScreen.vk);
+		RegisterHotkeySet(hwnd, kScreenIds, 3, hotkeyScreen);
 	return false;
 }
 
